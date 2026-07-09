@@ -6,4 +6,5 @@ export default defineConfig({
   // capacitor://localhost / androidlocal:// (file-based) contexts on-device,
   // not just from an http(s) origin root.
   base: './',
+  server: { port: 8093, strictPort: true },
 })
