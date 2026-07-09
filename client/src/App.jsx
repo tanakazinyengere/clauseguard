@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Shield, AlertTriangle, CheckCircle, FileText, Zap, DollarSign, Loader2, Lock, ArrowRight, Star, Users, Briefcase, Globe, Info } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import axios from 'axios';
 import { loadStripe } from '@stripe/stripe-js';
+import { fetchWithTimeout, FetchTimeoutError } from './lib/fetchWithTimeout';
 
 const stripePromise = loadStripe('pk_live_51TabVoRhcVsJZDqEdXCRGzds6vhimLJLtJEFfLpuM8xsbMNiQWlF74MKSmh3Qk0qUdTpKyc8n4NRqGz0Bo0OFlFc00tMhjmGWB');
 
@@ -24,11 +24,28 @@ const App = () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await axios.post('http://localhost:5000/api/scan', { contractText });
-      setResults(response.data);
+      const response = await fetchWithTimeout('http://localhost:5000/api/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contractText }),
+        timeoutMs: 9000,
+      });
+      if (!response.ok) throw new Error(`Scan request failed (${response.status})`);
+      const data = await response.json();
+      setResults(data);
       document.getElementById('results-section')?.scrollIntoView({ behavior: 'smooth' });
     } catch (err) {
-      setError('Analysis failed. Please ensure your backend is running.');
+      if (err instanceof FetchTimeoutError) {
+        setError({
+          message: "The scan is taking longer than expected. Check your connection and try again.",
+          retry: handleScan,
+        });
+      } else {
+        setError({
+          message: 'Analysis failed. Please ensure your backend is running.',
+          retry: handleScan,
+        });
+      }
       console.error(err);
     } finally {
       setLoading(false);
@@ -37,12 +54,25 @@ const App = () => {
 
   const handlePayment = async (priceId, mode) => {
     try {
-      const response = await axios.post('http://localhost:5000/api/create-checkout-session', { priceId, mode });
-      const { id } = response.data;
+      const response = await fetchWithTimeout('http://localhost:5000/api/create-checkout-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ priceId, mode }),
+        timeoutMs: 9000,
+      });
+      if (!response.ok) throw new Error(`Checkout session request failed (${response.status})`);
+      const { id } = await response.json();
       const stripe = await stripePromise;
       await stripe.redirectToCheckout({ sessionId: id });
     } catch (err) {
-      setError('Payment failed to initialize.');
+      if (err instanceof FetchTimeoutError) {
+        setError({
+          message: 'Payment setup is taking longer than expected. Check your connection and try again.',
+          retry: () => handlePayment(priceId, mode),
+        });
+      } else {
+        setError({ message: 'Payment failed to initialize.', retry: () => handlePayment(priceId, mode) });
+      }
       console.error(err);
     }
   };
@@ -186,6 +216,21 @@ const App = () => {
                 onChange={(e) => setContractText(e.target.value)}
               />
               
+              {error && (
+                <div className="mt-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-red-500/10 border border-red-500/20 rounded-2xl p-4 text-sm text-red-300">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-red-400" />
+                    <span>{error.message}</span>
+                  </div>
+                  <button
+                    onClick={error.retry}
+                    className="shrink-0 bg-red-500/20 hover:bg-red-500/30 text-red-200 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-colors"
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+
               <div className="mt-8 pt-8 border-t border-white/5 flex flex-col md:flex-row items-center justify-between gap-6">
                 <div className="flex items-center gap-6">
                   <div className="flex -space-x-2">
